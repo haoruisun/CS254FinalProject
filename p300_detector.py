@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Feb 11 15:24:23 2022
+Modified on Tue May 3 -- add plotting function
+                      -- add regression classifer
 
-@author: hsun11
+@author: Haorui Sun and Claire Davis
 """
 
 # %% Import packages
@@ -19,10 +21,15 @@ from sklearn.metrics import ConfusionMatrixDisplay
 from sklearn.metrics import classification_report
 from sklearn.metrics import accuracy_score
 from sklearn.utils import resample
+from sklearn.linear_model import LogisticRegression
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.models import Sequential 
+from tensorflow.keras.layers import Dense, Flatten
+from tensorflow.keras import optimizers
 
-
-# %% Proprocess func
-def preprocess(data_dict, ch_index, fs, epoch_period=667, downsample_size=2500):
+# %% Helper func
+def preprocess(data_dict, ch_index, fs, epoch_period=667, downsample_size=1000):
     '''
     This function loads the data struct to extract machine learning features 
     and downsample. 
@@ -81,7 +88,7 @@ def preprocess(data_dict, ch_index, fs, epoch_period=667, downsample_size=2500):
     filtered_sample = signal.filtfilt(filter_coefficients, 1, sample)
     
     # downsample
-    # form the dataset
+    # reform the dataset
     dataset = np.hstack((filtered_sample, np.reshape(label, (-1, 1))))
     # extract target and nontarget epochs
     target = dataset[np.where(label==1)[0]]
@@ -98,7 +105,112 @@ def preprocess(data_dict, ch_index, fs, epoch_period=667, downsample_size=2500):
     return X, y
 
 
-# %% SVM func
+def plot_data(X, y, title, fs, 
+              xlabel='Time After Stimulus (ms)', 
+              ylabel='Signal Amplitude (A/D Units)'):
+    '''
+    This function visualizes splitted training data for mannual inspection.
+    Plot will be saved to current working directory.
+
+    Parameters
+    ----------
+    X : 2d array: sample x feature
+        DESCRIPTION. Training data
+    y : 1d array
+        DESCRIPTION. Labels
+    title : string
+        DESCRIPTION. The plot's title and name
+    fs : int
+        DESCRIPTION. Sampling frequency in Hz
+    xlabel : string, optional
+        DESCRIPTION. The label for x-axis.
+                    The default is 'Time After Stimulus (ms)'.
+    ylabel : string, optional
+        DESCRIPTION. The label for y-axis.
+                    The default is 'Signal Amplitude (A/D Units)'.
+
+    Returns
+    -------
+    None.
+
+    '''
+    
+    # split training data into target and non-target and take average
+    target = np.mean(X[np.where(y==1)[0]], axis=0)
+    nontarget = np.mean(X[np.where(y==0)[0]], axis=0)
+    # convert x-axis to time series
+    time = np.arange(len(target))/fs*1000
+    
+    # plot the data
+    plt.figure()
+    plt.plot(time, target, label='target')
+    plt.plot(time, nontarget, label='nontarget')
+    # annotate the plot
+    plt.legend()
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.savefig(title+'.png')
+    
+
+def plot_matrix(X, y, model, label):
+    '''
+    This function takes trained model and testing data, and prints out its
+    perfermance on the testing data.
+
+    Parameters
+    ----------
+    X : 2d array: sample x feature
+        DESCRIPTION. Testing data
+    y : 1d array
+        DESCRIPTION. Testing labels
+    model : ML object
+        DESCRIPTION. Trained classifer
+    label : string
+        DESCRIPTION. The label for confusion matrix
+
+    Returns
+    -------
+    None.
+
+    '''
+    # generate the predicted labels
+    print('Predict labels for tested dataset...')
+    y_pred = model.predict(X)
+    # calculate the accuracy score
+    accuracy = accuracy_score(y, y_pred)
+    # print the results
+    print('Accuracy: ', accuracy)
+    
+    # plot the confusion matrix
+    print('Plot the confusion matrix...')
+    ConfusionMatrixDisplay.from_predictions(y, y_pred)
+    plt.show()
+    plt.text(4.3, 2.1, 'number of samples', rotation=90)
+    plt.title(label)
+    plt.savefig(label+'.png')
+    # display the main classification metrics
+    print('Display the main classification metrics:')
+    print(classification_report(y, y_pred))
+
+
+# %% Model func
+def log_reg(X, y):
+    
+    # split the data into training and testing datasets
+    X_train, X_test, y_train, y_test = train_test_split(scale(X), y)
+    print('Train Logistic Regression model...')
+    clf_lg = LogisticRegression(random_state=0).fit(X_train, y_train)
+    print('Now the classifier has been trained.')
+    
+    # print report and plot confusion matrix
+    label = 'LogReg_confusion_matrix'
+    plot_matrix(X_test, y_test, clf_lg, label)
+    # return trained classifier
+    return clf_lg
+
+
+
 def svm(X, y):
     '''
     This function trains a SVM classifer on given data and evaluates its 
@@ -140,60 +252,71 @@ def svm(X, y):
     # build the final svm
     clf_svm = SVC(C=C, kernel='linear')
     # train the model
-    print('Train the model...')
+    print('Train SVM model...')
     clf_svm.fit(X_train_scaled, y_train)
     print('Now the classifier has been trained.')
     
-    # generate the predicted labels
-    print('Predict labels for tested dataset...')
-    y_pred = clf_svm.predict(X_test_scaled)
-    # calculate the accuracy score
-    accuracy = accuracy_score(y_test, y_pred)
-    # print the results
-    print('Accuracy: ', accuracy)
-    
-    # plot the confusion matrix
-    print('Plot the confusion matrix...')
-    ConfusionMatrixDisplay.from_predictions(y_test, y_pred)
-    plt.show()
-    plt.text(4.3, 2.1, 'number of samples', rotation=90)
-    plt.title('SVM Confusion Matrix')
-    plt.savefig('svm_confusion_matrix.png')
-    # display the main classification metrics
-    print('Display the main classification metrics:')
-    print(classification_report(y_test, y_pred))
+    # print report and plot confusion matrix
+    label = 'svm_confusion_matrix'
+    plot_matrix(X_test_scaled, y_test, clf_svm, label)
+    # return trained classifier
     return clf_svm
     
+
+def dnn(X, y, optimizer=optimizers.Adam(), loss='mse'):
+    
+    # split the data into training, validating, and testing datasets
+    X_train, X_test, y_train, y_test = train_test_split(X, y)
+    
+    # design neural network architecture
+    layers = [
+        Flatten(),
+        Dense(32, activation="relu"),
+        Dense(8, activation="relu"),
+        Dense(1)
+    ]
+    dnn = Sequential(layers)
+    # compile neural network
+    dnn.compile(optimizer=optimizer, loss=loss, 
+                  metrics=['accuracy'])
+    # train the network and save each epoch output in the history list
+    history = dnn.fit(X_train, y_train, batch_size=16, epochs=10, 
+                        validation_split=0.2, verbose=0, callbacks=[])
+    # plot the performance
+    plt.figure()
+    plt.plot(history.history['accuracy'], label="acc")
+    plt.plot(history.history['val_accuracy'], label="val_acc")
+    plt.legend()
+    plt.show()
+    
+    # return trained network
+    return dnn
+
 
 # %% P300 detector
 # define data files 
 file = 'Subject_A_Train.mat'
 # declare the experiment parameters
 fs = 240        # sampling frequency in Hz
-channel = 57    # POz channel index
+channel = 10    # POz channel index
 
 # load the training data
 data_dict = lm.loadmat(file)
 # proprocess data
 X, y = preprocess(data_dict, channel, fs)
-# train the svm classifer
+# plot the training data
+plot_data(X, y, 'SA_training_data', fs)
+
+
+
+# %% Test log_reg
+clf_lg = log_reg(X, y)
+
+# %% train the svm classifer
 clf_svm = svm(X, y)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# %% Test dnn 
+dnn = dnn(X, y)
 
 
 
