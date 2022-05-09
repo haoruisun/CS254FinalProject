@@ -27,6 +27,8 @@ from tensorflow import keras
 from tensorflow.keras.models import Sequential 
 from tensorflow.keras.layers import Dense, Flatten
 from tensorflow.keras import optimizers
+from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
+from sklearn.model_selection import GridSearchCV
 
 # %% Helper func
 def preprocess(data_dict, ch_index, fs, epoch_period=667, downsample_size=1000):
@@ -262,7 +264,6 @@ def svm(X, y):
     # return trained classifier
     return clf_svm
     
-
 def dnn(X, y, optimizer=optimizers.Adam(), loss='mse'):
     
     # split the data into training, validating, and testing datasets
@@ -271,14 +272,15 @@ def dnn(X, y, optimizer=optimizers.Adam(), loss='mse'):
     # design neural network architecture
     layers = [
         Flatten(),
-        Dense(32, activation="relu"),
-        Dense(8, activation="relu"),
-        Dense(1)
+        Dense(100, activation="relu"),
+        Dense(10, activation="relu"),
+        Dense(1, activation='softmax')
     ]
     dnn = Sequential(layers)
     # compile neural network
     dnn.compile(optimizer=optimizer, loss=loss, 
                   metrics=['accuracy'])
+    
     # train the network and save each epoch output in the history list
     history = dnn.fit(X_train, y_train, batch_size=16, epochs=10, 
                         validation_split=0.2, verbose=0, callbacks=[])
@@ -292,6 +294,38 @@ def dnn(X, y, optimizer=optimizers.Adam(), loss='mse'):
     # return trained network
     return dnn
 
+def get_MLP_model(hiddenLayer1=100, hiddenLayer2=10, learningRate=0.1, loss='mse'):
+    layers = [
+        Flatten(),
+        Dense(hiddenLayer1, activation="relu"),
+        Dense(hiddenLayer2, activation="relu"),
+        Dense(1, activation='softmax')
+    ]
+    model = Sequential(layers)
+    optimizer = optimizers.Adam(learning_rate = learningRate)
+    # compile neural network
+    model.compile(optimizer=optimizer, loss=loss, 
+                  metrics=['accuracy'])
+    return model
+                  
+def dnn2(X, y):
+    model = KerasClassifier(build_fn=get_mlp_model, validation_split=0.2, verbose=0)
+    hiddenLayer1 = [100, 200, 300, 400]
+    hiddenLayer2 = [10, 20, 30, 40]
+    learnRate = [1e-2, 1e-3, 1e-4]
+    batchSize = [8, 16, 32, 64]
+    epochs = [10 50 100]
+    paramGrid = dict(hiddenLayer1=hiddenLayer1, hiddenLayer2=hiddenLayer2,
+                     learningRate=learningRate, batchSize=batchSize, epochs=epochs)
+    grid = GridSearchCV(estimator=model, param_grid=paramGrid, n_jobs=-1, cv=3, scoring='accuracy')
+    history = grid.fit(X_train, Y_train)
+
+    bestScore = history.best_score_
+    bestParams = history.best_params_
+    print("[INFO] best score is {:.2f} using {}".format(bestScore,
+	bestParams))
+
+    
 
 # %% P300 detector
 # define data files 
@@ -317,6 +351,6 @@ clf_svm = svm(X, y)
 
 # %% Test dnn 
 dnn = dnn(X, y)
-
+dnn2 = dnn2(X, y)
 
 
